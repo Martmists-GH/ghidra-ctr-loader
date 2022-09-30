@@ -78,15 +78,15 @@ data class CRO0Header(
 
     data class ImportModuleTableEntry(
         val nameOffset: Int,
-        val indexedImportNum: Int,
         val indexedHeadOffset: Int,
-        val anonymousImportNum: Int,
+        val indexedImportNum: Int,
         val anonymousHeadOffset: Int,
+        val anonymousImportNum: Int,
     )
 
     data class PatchEntry(
         val segmentOffset: Int,
-        val patchType: Byte,
+        val patchType: UByte,
         val segmentIndex: Byte,
         val unknown1: Byte,
         val unknown2: Byte,

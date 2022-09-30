@@ -31,6 +31,7 @@ class Reader(private val littleEndian: Boolean, open val stream: InputStream) {
         stream.mark(0)
     }
 
+    fun seek(offset: Int) = seek(offset.toLong())
     fun seek(offset: Long) {
         if (stream is FileInputStream) {
             this.offset = offset
@@ -48,6 +49,17 @@ class Reader(private val littleEndian: Boolean, open val stream: InputStream) {
     inline fun <reified T: Any> readSizedList() = readList<T>(read())
     fun readString(size: Int) = readList<Char>(size).joinToString("")
     fun readSizedString() = readString(read())
+    fun readNullTerminatedString(): String {
+        val sb = StringBuilder()
+        while (true) {
+            val c = read<Char>()
+            if (c == 0.toChar()) {
+                break
+            }
+            sb.append(c)
+        }
+        return sb.toString()
+    }
 
     fun readBytes(size: Int): ByteArray {
         offset += size
