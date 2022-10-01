@@ -8,8 +8,9 @@ Currently supports:
 
 - CXI Imports
 - CRO Imports
+- CRS Imports (from CXI only)
 
 Planned:
 
-- CIA Imports
 - CRO multi-file analysis (i.e. linking imports and exports together)
+- CIA Imports

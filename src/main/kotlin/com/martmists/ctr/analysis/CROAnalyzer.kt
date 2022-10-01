@@ -13,7 +13,7 @@ import ghidra.program.model.address.AddressSetView
 import ghidra.program.model.listing.Program
 import ghidra.util.task.TaskMonitor
 
-class CROAnalyzer : AbstractAnalyzer("CRO Analyzer", "Analyzes CRO files", AnalyzerType.BYTE_ANALYZER) {
+class CROAnalyzer : AbstractAnalyzer("CRO Analyzer (experimental)", "Analyzes CRO files", AnalyzerType.BYTE_ANALYZER) {
     // TODO: Fix this
 
     init {

@@ -7,7 +7,7 @@ import java.nio.ByteOrder
 import kotlin.reflect.*
 import kotlin.reflect.full.isSubclassOf
 
-class Reader(private val littleEndian: Boolean, open val stream: InputStream) {
+class Reader(private val littleEndian: Boolean, val stream: InputStream) {
     private var offset = 0L
 
     init {

@@ -32,7 +32,7 @@ open class CROLoader : AbstractLibrarySupportLoader() {
 
         if (reader.readAsciiString(0x80, 4) == "CRO0" && !provider.name.endsWith(".crs")) {
             // TODO: Consider other ARM versions
-            loadSpecs.add(LoadSpec(this, 0, LanguageCompilerSpecPair("ARM:LE:32:v6", "default"), true))
+            loadSpecs.add(LoadSpec(this, 0, LanguageCompilerSpecPair("ARM:LE:32:v7", "default"), true))
         }
 
         return loadSpecs

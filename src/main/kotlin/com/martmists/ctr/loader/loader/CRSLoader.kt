@@ -3,14 +3,12 @@ package com.martmists.ctr.loader.loader
 import com.martmists.ctr.ext.reader
 import com.martmists.ctr.loader.format.CRO0Header
 import com.martmists.ctr.loader.format.NCCHExHeader
-import com.martmists.ctr.loader.format.NCCHHeader
 import ghidra.app.util.MemoryBlockUtils
 import ghidra.app.util.bin.BinaryReader
 import ghidra.app.util.bin.ByteProvider
 import ghidra.app.util.importer.MessageLog
 import ghidra.app.util.opinion.LoadSpec
 import ghidra.formats.gfilesystem.FileSystemService
-import ghidra.program.flatapi.FlatProgramAPI
 import ghidra.program.model.lang.LanguageCompilerSpecPair
 import ghidra.program.model.listing.Program
 import ghidra.util.task.TaskMonitor
@@ -25,7 +23,7 @@ class CRSLoader : CROLoader() {
 
         if (reader.readAsciiString(0x80, 4) == "CRO0" && provider.name.endsWith(".crs")) {
             // TODO: Consider other ARM versions
-            loadSpecs.add(LoadSpec(this, 0, LanguageCompilerSpecPair("ARM:LE:32:v6", "default"), true))
+            loadSpecs.add(LoadSpec(this, 0, LanguageCompilerSpecPair("ARM:LE:32:v7", "default"), true))
         }
 
         return loadSpecs
