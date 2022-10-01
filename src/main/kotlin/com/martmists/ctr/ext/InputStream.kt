@@ -6,10 +6,15 @@ import kotlin.contracts.InvocationKind
 import kotlin.contracts.contract
 
 fun InputStream.reader(littleEndian: Boolean = true) : Reader = Reader(littleEndian, this)
-fun <T> InputStream.reader(littleEndian: Boolean = true, block: Reader.() -> T): T {
+fun <T> InputStream.reader(littleEndian: Boolean = true, autoClose: Boolean = true, block: Reader.() -> T): T {
     contract {
         callsInPlace(block, InvocationKind.EXACTLY_ONCE)
     }
 
-    return block(reader(littleEndian))
+    val res = block(reader(littleEndian))
+    if (autoClose) {
+        close()
+    }
+
+    return res
 }

@@ -23,7 +23,13 @@ import kotlin.math.min
     priority = FileSystemInfo.PRIORITY_HIGH,
 )
 class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProvider, private val fsService: FileSystemService) : GFileSystem {
-    private val fsih: FileSystemIndexHelper<IVFCHeader.Level3Header.FileMetadata?> = FileSystemIndexHelper(this, fsFSRL)
+    data class Metadata(
+        val ncch: NCCHHeader,
+        val ncchEx: NCCHExHeader,
+        val file: IVFCHeader.Level3Header.FileMetadata?,
+    )
+
+    private val fsih: FileSystemIndexHelper<Metadata> = FileSystemIndexHelper(this, fsFSRL)
     private val refManager = FileSystemRefManager(this)
     private var fileCount = 0L
     private var closed = false
@@ -37,6 +43,7 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
         val stream = provider.getInputStream(0)
         stream.reader {
             val ncch = read<NCCHHeader>()
+            val ncchEx = read<NCCHExHeader>()
 
             seek(ncch.exefsOffset.mediaUnits)
             val exefsHeader = read<ExeFSHeader>()
@@ -51,7 +58,7 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
                     fileCount++,
                     false,
                     file.size.toLong(),
-                    null,
+                    Metadata(ncch, ncchEx, null),
                 )
             }
 
@@ -80,7 +87,7 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
                         fileCount++,
                         false,
                         file.dataSize,
-                        file,
+                        Metadata(ncch, ncchEx, file),
                     )
                     childFileOffset = file.siblingOffset
                 }
@@ -105,24 +112,21 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
     override fun getRefManager() = refManager
 
     @Throws(IOException::class)
-    override fun lookup(path: String) = fsih.lookup(path)
+    override fun lookup(path: String?) = fsih.lookup(path)
 
     @Throws(IOException::class, CancelledException::class)
-    override fun getByteProvider(file: GFile, monitor: TaskMonitor): ByteProvider {
+    override fun getByteProvider(file: GFile, monitor: TaskMonitor): ByteProvider? {
         val metadata = fsih.getMetadata(file)
 
-        if (file.path.startsWith("/exefs")) {
+        if (file.path.startsWith("/exefs/")) {
             val fileName = file.path.removePrefix("/exefs/")
             return provider.getInputStream(0).reader {
-                val ncch = read<NCCHHeader>()
-                val ncchEx = read<NCCHExHeader>()
-
-                seek(ncch.exefsOffset.mediaUnits)
+                seek(metadata.ncch.exefsOffset.mediaUnits)
                 val exefsHeader = read<ExeFSHeader>()
                 val exefsStart = tell()
                 val codeSection = exefsHeader.fileHeaders_10.first { it.filename_8.stripNulls() == fileName }
 
-                val size = if (ncchEx.sci.flags and 0x1 == 1.toByte()) {
+                val size = if (metadata.ncchEx.sci.flags and 0x1 == 1.toByte()) {
                     skip(codeSection.offset.toLong())
                     val exefsCode = readBytes(codeSection.size)
                     exefsCode.lzssSize()
@@ -134,14 +138,14 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
                     provider.getInputStream(0).reader {
                         seek(exefsStart + codeSection.offset)
                         var code = readBytes(codeSection.size)
-                        if (ncchEx.sci.flags and 0x1 == 1.toByte()) {
+                        if (metadata.ncchEx.sci.flags and 0x1 == 1.toByte()) {
                             code = code.lzss()
                         }
                         out.write(code)
                     }
                 }, monitor)
             }
-        } else {
+        } else if (file.path.startsWith("/romfs/")) {
             return provider.getInputStream(0).reader {
                 val ncch = read<NCCHHeader>()
 
@@ -149,9 +153,9 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
                 val level3HeaderStart = tell()
                 val level3Header = read<IVFCHeader.Level3Header>()
 
-                fsService.getDerivedByteProviderPush(provider.fsrl, file.fsrl, file.path, metadata!!.dataSize, { out ->
-                    val stream = provider.getInputStream(level3HeaderStart + level3Header.fileDataOffset + metadata.dataOffset)
-                    var remaining = metadata.dataSize
+                fsService.getDerivedByteProviderPush(provider.fsrl, file.fsrl, file.path, metadata.file!!.dataSize, { out ->
+                    val stream = provider.getInputStream(level3HeaderStart + level3Header.fileDataOffset + metadata.file.dataOffset)
+                    var remaining = metadata.file.dataSize
                     while (remaining > 0) {
                         val buffer = ByteArray(min(0x1000L, remaining).toInt())
                         val read = stream.read(buffer)
@@ -163,6 +167,8 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
                     }
                 }, monitor)
             }
+        } else {
+            return null
         }
     }
 
@@ -172,9 +178,7 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
     override fun getFileAttributes(file: GFile, monitor: TaskMonitor): FileAttributes {
         val metadata = fsih.getMetadata(file)
         val result = FileAttributes()
-        if (metadata != null) {
 
-        }
         return result
     }
 }

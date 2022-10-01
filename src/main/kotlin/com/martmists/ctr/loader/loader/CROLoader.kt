@@ -3,7 +3,6 @@ package com.martmists.ctr.loader.loader
 import com.martmists.ctr.ext.reader
 import com.martmists.ctr.loader.format.CRO0Header
 import com.martmists.ctr.loader.struct.*
-import ghidra.app.plugin.assembler.Assemblers
 import ghidra.app.util.MemoryBlockUtils
 import ghidra.app.util.Option
 import ghidra.app.util.bin.BinaryReader
@@ -24,7 +23,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 
-class CROLoader : AbstractLibrarySupportLoader() {
+open class CROLoader : AbstractLibrarySupportLoader() {
     override fun getName() = "CRO Loader"
 
     override fun findSupportedLoadSpecs(provider: ByteProvider): MutableCollection<LoadSpec> {
@@ -49,9 +48,10 @@ class CROLoader : AbstractLibrarySupportLoader() {
     ) {
         createDataTypes(program)
         createSegments(provider, program, monitor, log)
+        declareImportsAndExports(program, provider, monitor, log)
     }
 
-    private fun createDataTypes(program: Program) {
+    protected open fun createDataTypes(program: Program) {
         for (struct in listOf(
             SegmentOffsetStruct,
             PatchEntryStruct,
@@ -78,17 +78,18 @@ class CROLoader : AbstractLibrarySupportLoader() {
         else -> throw IllegalArgumentException("Invalid segment $segment")
     }
 
-    private fun createSegments(provider: ByteProvider, program: Program, monitor: TaskMonitor, log: MessageLog) {
-        val api = FlatProgramAPI(program, monitor)
-
+    protected open fun createSegments(provider: ByteProvider, program: Program, monitor: TaskMonitor, log: MessageLog) {
         provider.getInputStream(0).reader {
             val header = read<CRO0Header>()
 
             seek(header.segmentTableOffset)
             val segments = readList<CRO0Header.SegmentTableEntry>(header.segmentTableNum)
 
-            val ramBytes = MemoryBlockUtils.createFileBytes(program, provider, 0, header.fileSize.toLong(), monitor)
-            MemoryBlockUtils.createInitializedBlock(program, false, "ram", program.imageBase, ramBytes, 0, header.fileSize.toLong(), "", null, true, false, false, log)
+            val headerBytes = MemoryBlockUtils.createFileBytes(program, provider, 0, 0x312, monitor)
+            MemoryBlockUtils.createInitializedBlock(program, false, "header", program.imageBase.add(0x600000), headerBytes, 0, 0x312, "", null, true, false, false, log)
+
+            val tablesBytes = MemoryBlockUtils.createFileBytes(program, provider, header.segmentTableOffset.toLong(), (header.dataOffset - header.segmentTableOffset).toLong(), monitor)
+            MemoryBlockUtils.createInitializedBlock(program, false, "tables", program.imageBase.add(0x600000L + header.segmentTableOffset.toLong()), tablesBytes, 0, (header.dataOffset - header.segmentTableOffset).toLong(), "", null, true, true, false, log)
 
             for (segment in segments) {
                 if (segment.size == 0) {
@@ -113,6 +114,13 @@ class CROLoader : AbstractLibrarySupportLoader() {
                     else -> throw IllegalStateException("Unknown segment ID ${segment.id}")
                 }
             }
+        }
+    }
+
+    protected open fun declareImportsAndExports(program: Program, provider: ByteProvider, monitor: TaskMonitor, log: MessageLog) {
+        val api = FlatProgramAPI(program, monitor)
+        provider.getInputStream(0).reader {
+            val header = read<CRO0Header>()
 
             val numExternals = header.namedImportTableNum + header.indexedImportTableNum + header.anonymousImportTableNum
 
@@ -248,4 +256,5 @@ class CROLoader : AbstractLibrarySupportLoader() {
             }
         }
     }
+
 }
