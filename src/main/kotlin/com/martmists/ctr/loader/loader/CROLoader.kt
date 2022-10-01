@@ -31,7 +31,7 @@ class CROLoader : AbstractLibrarySupportLoader() {
         val loadSpecs = mutableListOf<LoadSpec>()
         val reader = BinaryReader(provider, true)
 
-        if (reader.readAsciiString(0x80, 4).equals("CRO0")) {
+        if (reader.readAsciiString(0x80, 4) == "CRO0" && !provider.name.endsWith(".crs")) {
             // TODO: Consider other ARM versions
             loadSpecs.add(LoadSpec(this, 0, LanguageCompilerSpecPair("ARM:LE:32:v6", "default"), true))
         }
@@ -87,6 +87,9 @@ class CROLoader : AbstractLibrarySupportLoader() {
             seek(header.segmentTableOffset)
             val segments = readList<CRO0Header.SegmentTableEntry>(header.segmentTableNum)
 
+            val ramBytes = MemoryBlockUtils.createFileBytes(program, provider, 0, header.fileSize.toLong(), monitor)
+            MemoryBlockUtils.createInitializedBlock(program, false, "ram", program.imageBase, ramBytes, 0, header.fileSize.toLong(), "", null, true, false, false, log)
+
             for (segment in segments) {
                 if (segment.size == 0) {
                     continue
@@ -120,7 +123,9 @@ class CROLoader : AbstractLibrarySupportLoader() {
                 return addr
             }
 
-            MemoryBlockUtils.createUninitializedBlock(program, false, "imports", externalsStart, numExternals * 4L, "", null, true, false, false, log)
+            if (numExternals > 0) {
+                MemoryBlockUtils.createUninitializedBlock(program, false, "imports", externalsStart, numExternals * 4L, "", null, true, false, false, log)
+            }
 
             seek(header.importModuleTableOffset)
             val importModules = readList<CRO0Header.ImportModuleTableEntry>(header.importModuleTableNum)
