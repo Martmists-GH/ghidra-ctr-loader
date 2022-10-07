@@ -1,6 +1,7 @@
 package com.martmists.ctr.loader.loader
 
 import com.martmists.ctr.common.CROUtilities
+import com.martmists.ctr.ext.hex
 import com.martmists.ctr.ext.reader
 import com.martmists.ctr.ext.segOff
 import com.martmists.ctr.loader.format.CRO0Header
@@ -114,21 +115,26 @@ open class CROLoader : AbstractLibrarySupportLoader(), CROUtilities {
             MemoryBlockUtils.createInitializedBlock(program, false, "name", program.imageBase.add(header.moduleNameOffset.toLong()), nameBytes, 0, header.moduleNameSize.toLong(), "", null, true, true, false, log)
 
             for (segment in segments) {
-                if (segment.id == 3 || segment.size == 0 || program.memory.getBlock(getSegmentName(segment.id)) != null) {
+                val segmentSize = if (segment.id != 3) segment.size else maxOf(segment.size, header.bssSize)
+
+                if (segmentSize == 0 || program.memory.getBlock(getSegmentName(segment.id)) != null) {
                     continue
                 }
 
-                val fileBytes = MemoryBlockUtils.createFileBytes(program, provider, segment.offset.toLong(), segment.size.toLong(), monitor)
+                val segmentName = getSegmentName(segment.id)
+                val (r, w, x) = getSegmentPermissions(segment.id)
 
                 when (segment.id) {
-                    0 -> {
-                        MemoryBlockUtils.createInitializedBlock(program, false, ".text", program.addressFactory.defaultAddressSpace.getAddress(segment.offset.toLong()), fileBytes, 0, segment.size.toLong(), "", null, true, false, true, log)
+                    0, 1, 2 -> {
+                        val fileBytes = MemoryBlockUtils.createFileBytes(program, provider, segment.offset.toLong(), segment.size.toLong(), monitor)
+                        MemoryBlockUtils.createInitializedBlock(program, false, segmentName, program.imageBase.add(segment.offset.toLong()), fileBytes, 0, segmentSize.toLong(), "", null, r, w, x, log)
                     }
-                    1 -> {
-                        MemoryBlockUtils.createInitializedBlock(program, false, ".rodata", program.addressFactory.defaultAddressSpace.getAddress(segment.offset.toLong()), fileBytes, 0, segment.size.toLong(), "", null, true, false, false, log)
-                    }
-                    2 -> {
-                        MemoryBlockUtils.createInitializedBlock(program, false, ".data", program.addressFactory.defaultAddressSpace.getAddress(segment.offset.toLong()), fileBytes, 0, segment.size.toLong(), "", null, true, true, false, log)
+                    3 -> {
+                        var offset = segment.offset
+                        if (offset == 0) {
+                            offset = 0x00800000
+                        }
+                        MemoryBlockUtils.createUninitializedBlock(program, false, segmentName, program.imageBase.add(offset.toLong()), segmentSize.toLong(), "", null, r, w, x, log)
                     }
                     else -> throw IllegalStateException("Unknown segment ID ${segment.id}")
                 }
@@ -197,16 +203,16 @@ open class CROLoader : AbstractLibrarySupportLoader(), CROUtilities {
                 val patchAddress = block.start.add(offset.toLong())
 
                 val targetSegment = patch.segmentIndex
-                if (targetSegment == 3.toByte()) continue
 
                 val targetAddress = try {
-                    program.memory.getBlock(getSegmentName(targetSegment.toInt())).start.add(patch.addend.toLong())
-                } catch (e: IllegalArgumentException) {
-                    // BSS section, ignore
-                    continue
+                    val targetBlock = program.memory.getBlock(getSegmentName(targetSegment.toInt()))
+                    val target = targetBlock.start.add(patch.addend.toLong())
+                    if (target > targetBlock.end) {
+                        throw IllegalStateException("Target address ($target) for patch ($patchAddress:${patch.addend.hex}) is outside of segment $targetSegment:${block.start}-${block.end}")
+                    }
+                    target
                 } catch (e: NullPointerException) {
-                    println("WARN: Failed to find block for segment $targetSegment (patch: $patchAddress:${patch.addend}) | blocks: ${program.memory.blocks.joinToString(", ") { "${it.name}:${it.start}-${it.end}" }}")
-                    continue
+                    throw IllegalStateException("Failed to find block for segment $targetSegment (patch: $patchAddress:${patch.addend.hex}) | blocks: ${program.memory.blocks.joinToString(", ") { "${it.name}:${it.start}-${it.end}" }}")
                 }
 
                 val arr = ByteArray(4)

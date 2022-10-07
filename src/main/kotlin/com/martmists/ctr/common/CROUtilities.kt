@@ -17,10 +17,19 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 interface CROUtilities {
+    fun getSegmentPermissions(segment: Int) = when (segment) {
+        0 -> Triple(true, false, true)
+        1 -> Triple(true, false, false)
+        2 -> Triple(true, true, false)
+        3 -> Triple(true, true, false)
+        else -> throw IllegalArgumentException("Invalid segment $segment")
+    }
+
     fun getSegmentName(segment: Int) = when (segment) {
         0 -> ".text"
         1 -> ".rodata"
         2 -> ".data"
+        3 -> ".bss"
         else -> throw IllegalArgumentException("Invalid segment $segment")
     }
 

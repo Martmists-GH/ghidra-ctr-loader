@@ -95,7 +95,7 @@ val CROHeaderStruct = """struct CRO0Header {
     char* importStringsOffset;
     int importStringsSize;
     int unknown2[2];
-    int relocationPatchesOffset;
-    struct PatchEntry* relocationPatchesNum;
+    struct PatchEntry* relocationPatchesOffset;
+    int relocationPatchesNum;
     int unknown3[2];
 };"""

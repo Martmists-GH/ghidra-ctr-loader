@@ -44,6 +44,7 @@ class CRSLoader : CROLoader() {
                 seek(0x200)
                 val ncchEx = read<NCCHExHeader>()
 
+                var codeOffset = 0L
                 val codeSetMap = mapOf(
                     ".text" to ncchEx.sci.textCodeSetInfo,
                     ".rodata" to ncchEx.sci.readOnlyCodeSetInfo,
@@ -52,23 +53,34 @@ class CRSLoader : CROLoader() {
 
                 val aligned = codeSetMap.values.sumOf { it.size } < codeBinProvider.length()
 
-                var codeOffset = 0L
-                for ((segmentName, codeSet) in codeSetMap) {
-                    val regionSize = if (aligned) codeSet.physRegionSize * 0x1000L else codeSet.size.toLong()
-                    val segmentBytes = MemoryBlockUtils.createFileBytes(program, codeBinProvider, codeOffset, regionSize, monitor)
-
-                    when (segmentName) {
-                        ".text" -> {
-                            MemoryBlockUtils.createInitializedBlock(program, false, ".text", program.imageBase.add(codeSet.address.toLong()), segmentBytes, 0, regionSize, "", null, true, false, true, log)
-                        }
-                        ".rodata" -> {
-                            MemoryBlockUtils.createInitializedBlock(program, false, ".rodata", program.imageBase.add(codeSet.address.toLong()), segmentBytes, 0, regionSize, "", null, true, false, false, log)
-                        }
-                        ".data" -> {
-                            MemoryBlockUtils.createInitializedBlock(program, false, ".data", program.imageBase.add(codeSet.address.toLong()), segmentBytes, 0, regionSize, "", null, true, true, false, log)
-                        }
+                seek(header.segmentTableOffset)
+                val segments = readList<CRO0Header.SegmentTableEntry>(header.segmentTableNum)
+                for (segment in segments) {
+                    if (segment.size == 0 || program.memory.getBlock(getSegmentName(segment.id)) != null) {
+                        continue
                     }
-                    codeOffset += regionSize
+
+                    val segmentName = getSegmentName(segment.id)
+                    val (r, w, x) = getSegmentPermissions(segment.id)
+
+                    when (segment.id) {
+                        0, 1, 2 -> {
+                            val codeSet = codeSetMap[segmentName]!!
+                            val regionSize = if (aligned) codeSet.physRegionSize * 0x1000L else codeSet.size.toLong()
+                            val segmentBytes = MemoryBlockUtils.createFileBytes(program, codeBinProvider, codeOffset, regionSize, monitor)
+
+                            MemoryBlockUtils.createInitializedBlock(program, false, segmentName, program.imageBase.add(codeSet.address.toLong()), segmentBytes, 0, regionSize, "", null, r, w, x, log)
+                            codeOffset += regionSize
+                        }
+                        3 -> {
+                            var offset = segment.offset
+                            if (offset == 0) {
+                                offset = 0x00800000
+                            }
+                            MemoryBlockUtils.createUninitializedBlock(program, false, segmentName, program.imageBase.add(offset.toLong()), segment.size.toLong(), "", null, r, w, x, log)
+                        }
+                        else -> throw IllegalStateException("Unknown segment ID ${segment.id}")
+                    }
                 }
             }
         }

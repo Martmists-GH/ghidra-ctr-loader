@@ -27,11 +27,11 @@ dependencies {
 }
 
 
-    val main by sourceSets.getting {
-        java.srcDirs(
-            "ghidra_scripts",
-        )
-    }
+val main by sourceSets.getting {
+    java.srcDirs(
+        "ghidra_scripts",
+    )
+}
 
 
 val ghidraInstallDir = System.getenv("GHIDRA_INSTALL_DIR") ?: project.properties["GHIDRA_INSTALL_DIR"] as? String ?: throw GradleException("GHIDRA_INSTALL_DIR not set")

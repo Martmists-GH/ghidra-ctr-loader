@@ -40,7 +40,6 @@ open class CROLinkingScriptImpl : GhidraScript(), CROUtilities {
             val program = it.getProgram()
             program to program.getModuleData()
         }.forEach { (moduleProgram, moduleData) ->
-            println(moduleData)
             monitor.message = "Handling module ${moduleData.name}"
 
             // Find locations of named imports
