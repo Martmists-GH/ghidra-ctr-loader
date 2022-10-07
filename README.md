@@ -13,4 +13,6 @@ Currently supports:
 
 Planned:
 
+- Support for .bss sections and relocations
+- Support for multiple .rodata/.data sections in static.crs
 - CIA Imports
