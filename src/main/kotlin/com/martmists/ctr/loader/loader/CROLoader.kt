@@ -1,6 +1,8 @@
 package com.martmists.ctr.loader.loader
 
+import com.martmists.ctr.common.CROUtilities
 import com.martmists.ctr.ext.reader
+import com.martmists.ctr.ext.segOff
 import com.martmists.ctr.loader.format.CRO0Header
 import com.martmists.ctr.loader.struct.*
 import ghidra.app.util.MemoryBlockUtils
@@ -11,27 +13,32 @@ import ghidra.app.util.cparser.C.CParser
 import ghidra.app.util.importer.MessageLog
 import ghidra.app.util.opinion.AbstractLibrarySupportLoader
 import ghidra.app.util.opinion.LoadSpec
-import ghidra.program.flatapi.FlatProgramAPI
-import ghidra.program.model.address.Address
 import ghidra.program.model.data.DataTypeConflictHandler
 import ghidra.program.model.lang.LanguageCompilerSpecPair
 import ghidra.program.model.listing.Program
-import ghidra.program.model.symbol.ExternalLocation
 import ghidra.program.model.symbol.SourceType
 import ghidra.util.task.TaskMonitor
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 
-open class CROLoader : AbstractLibrarySupportLoader() {
+open class CROLoader : AbstractLibrarySupportLoader(), CROUtilities {
     override fun getName() = "CRO Loader"
+
+    private var exportIndex = 0L
+    override fun nextExportIndex(): Long {
+        return exportIndex++
+    }
+
+    open fun isValid(provider: ByteProvider): Boolean {
+        val reader = BinaryReader(provider, true)
+        return reader.readAsciiString(0x80, 4) == "CRO0" && !provider.name.endsWith(".crs")
+    }
 
     override fun findSupportedLoadSpecs(provider: ByteProvider): MutableCollection<LoadSpec> {
         val loadSpecs = mutableListOf<LoadSpec>()
-        val reader = BinaryReader(provider, true)
 
-        if (reader.readAsciiString(0x80, 4) == "CRO0" && !provider.name.endsWith(".crs")) {
-            // TODO: Consider other ARM versions
+        if (isValid(provider)) {
             loadSpecs.add(LoadSpec(this, 0, LanguageCompilerSpecPair("ARM:LE:32:v7", "default"), true))
         }
 
@@ -47,8 +54,10 @@ open class CROLoader : AbstractLibrarySupportLoader() {
         log: MessageLog,
     ) {
         createDataTypes(program)
-        createSegments(provider, program, monitor, log)
+        createSegments(program, provider, monitor, log)
         declareImportsAndExports(program, provider, monitor, log)
+        setLabels(program, provider, monitor)
+        applyPatches(program, provider)
     }
 
     protected open fun createDataTypes(program: Program) {
@@ -71,28 +80,41 @@ open class CROLoader : AbstractLibrarySupportLoader() {
         }
     }
 
-    private fun getSegmentName(segment: Int) = when (segment) {
-        0 -> ".text"
-        1 -> ".rodata"
-        2 -> ".data"
-        else -> throw IllegalArgumentException("Invalid segment $segment")
+    private fun createSegments(program: Program, provider: ByteProvider, monitor: TaskMonitor, log: MessageLog) {
+        if (provider.fsrl.fs.container != null) {
+            val parent = provider.fsrl.fs.container
+            when {
+                parent.path.endsWith(".cxi") -> {
+                    createSegmentsFromCXI(provider, program, monitor, log)
+                }
+            }
+        } else {
+            createSegmentsFromFile(provider, program, monitor, log)
+        }
     }
 
-    protected open fun createSegments(provider: ByteProvider, program: Program, monitor: TaskMonitor, log: MessageLog) {
+    protected open fun createSegmentsFromCXI(provider: ByteProvider, program: Program, monitor: TaskMonitor, log: MessageLog) {
+        return createSegmentsFromFile(provider, program, monitor, log)
+    }
+
+    protected open fun createSegmentsFromFile(provider: ByteProvider, program: Program, monitor: TaskMonitor, log: MessageLog) {
         provider.getInputStream(0).reader {
             val header = read<CRO0Header>()
 
             seek(header.segmentTableOffset)
             val segments = readList<CRO0Header.SegmentTableEntry>(header.segmentTableNum)
 
-            val headerBytes = MemoryBlockUtils.createFileBytes(program, provider, 0, 0x312, monitor)
-            MemoryBlockUtils.createInitializedBlock(program, false, "header", program.imageBase.add(0x600000), headerBytes, 0, 0x312, "", null, true, false, false, log)
+            val headerBytes = MemoryBlockUtils.createFileBytes(program, provider, 0, 0x138, monitor)
+            MemoryBlockUtils.createInitializedBlock(program, false, "header", program.imageBase, headerBytes, 0, 0x138, "", null, true, false, false, log)
 
             val tablesBytes = MemoryBlockUtils.createFileBytes(program, provider, header.segmentTableOffset.toLong(), (header.dataOffset - header.segmentTableOffset).toLong(), monitor)
-            MemoryBlockUtils.createInitializedBlock(program, false, "tables", program.imageBase.add(0x600000L + header.segmentTableOffset.toLong()), tablesBytes, 0, (header.dataOffset - header.segmentTableOffset).toLong(), "", null, true, true, false, log)
+            MemoryBlockUtils.createInitializedBlock(program, false, "tables", program.imageBase.add(header.segmentTableOffset.toLong()), tablesBytes, 0, (header.dataOffset - header.segmentTableOffset).toLong(), "", null, true, true, false, log)
+
+            val nameBytes = MemoryBlockUtils.createFileBytes(program, provider, header.moduleNameOffset.toLong(), header.moduleNameSize.toLong(), monitor)
+            MemoryBlockUtils.createInitializedBlock(program, false, "name", program.imageBase.add(header.moduleNameOffset.toLong()), nameBytes, 0, header.moduleNameSize.toLong(), "", null, true, true, false, log)
 
             for (segment in segments) {
-                if (segment.size == 0) {
+                if (segment.id == 3 || segment.size == 0 || program.memory.getBlock(getSegmentName(segment.id)) != null) {
                     continue
                 }
 
@@ -108,9 +130,6 @@ open class CROLoader : AbstractLibrarySupportLoader() {
                     2 -> {
                         MemoryBlockUtils.createInitializedBlock(program, false, ".data", program.addressFactory.defaultAddressSpace.getAddress(segment.offset.toLong()), fileBytes, 0, segment.size.toLong(), "", null, true, true, false, log)
                     }
-                    3 -> {
-                        continue
-                    }
                     else -> throw IllegalStateException("Unknown segment ID ${segment.id}")
                 }
             }
@@ -118,143 +137,95 @@ open class CROLoader : AbstractLibrarySupportLoader() {
     }
 
     protected open fun declareImportsAndExports(program: Program, provider: ByteProvider, monitor: TaskMonitor, log: MessageLog) {
-        val api = FlatProgramAPI(program, monitor)
         provider.getInputStream(0).reader {
             val header = read<CRO0Header>()
 
             val numExternals = header.namedImportTableNum + header.indexedImportTableNum + header.anonymousImportTableNum
-
-            var externalsStart = program.addressFactory.defaultAddressSpace.getAddress(0x100000000 - (numExternals + 1) * 4L)
-            fun externalAddr(): Address {
-                val addr = externalsStart
-                externalsStart = externalsStart.add(4)
-                return addr
-            }
-
+            val externalsStart = program.imageBase.add(0x0a000000)
             if (numExternals > 0) {
-                MemoryBlockUtils.createUninitializedBlock(program, false, "imports", externalsStart, numExternals * 4L, "", null, true, false, false, log)
+                MemoryBlockUtils.createUninitializedBlock(program, false, "EXTERNALS", externalsStart, (numExternals * 4L), "", null, true, false, false, log)
             }
 
             seek(header.importModuleTableOffset)
             val importModules = readList<CRO0Header.ImportModuleTableEntry>(header.importModuleTableNum)
-
-            program.externalManager.addExternalLibraryName("|named_exports|", SourceType.IMPORTED)
             for (module in importModules) {
                 seek(module.nameOffset)
                 val name = readNullTerminatedString()
                 program.externalManager.addExternalLibraryName(name, SourceType.IMPORTED)
             }
+        }
+    }
 
-            // Add symbols for exports
+    protected fun setLabels(program: Program, provider: ByteProvider, monitor: TaskMonitor) {
+        provider.getInputStream(0).reader {
+            val header = read<CRO0Header>()
+
             seek(header.moduleNameOffset)
-            val moduleName = readString(header.moduleNameSize)
+            val name = readNullTerminatedString()
 
             seek(header.namedExportTableOffset)
             val namedExports = readList<CRO0Header.NamedExportTableEntry>(header.namedExportTableNum)
-            for (export in namedExports) {
-                seek(export.nameOffset)
-                val name = readNullTerminatedString()
-                val segment = export.segmentOffset and 0xF
-                val offset = export.segmentOffset shr 4
-                val block = program.memory.getBlock(getSegmentName(segment))
-                program.symbolTable.createLabel(block.start.add(offset.toLong()), name, SourceType.IMPORTED)
-                api.addEntryPoint(block.start.add(offset.toLong()))
+            monitor.message = "Creating labels for named exports"
+            namedExports.forEach { exportTableEntry ->
+                seek(exportTableEntry.nameOffset)
+                val exportName = readNullTerminatedString()
+                val (segment, offset) = exportTableEntry.segmentOffset.segOff
+                program.createFromReference(segment, offset, exportName)
             }
 
+            monitor.message = "Creating labels for indexed exports"
             seek(header.indexedExportTableOffset)
             val indexedExports = readList<CRO0Header.IndexedExportTableEntry>(header.indexedExportTableNum)
-            for ((index, export) in indexedExports.withIndex()) {
-                val segment = export.segmentOffset and 0xF
-                val offset = export.segmentOffset shr 4
-                val block = program.memory.getBlock(getSegmentName(segment))
-                program.symbolTable.createLabel(block.start.add(offset.toLong()), "${moduleName}_indexed_${index}", SourceType.IMPORTED)
-                api.addEntryPoint(block.start.add(offset.toLong()))
+            indexedExports.forEachIndexed { i, exportTableEntry ->
+                val (segment, offset) = exportTableEntry.segmentOffset.segOff
+                program.createFromReference(segment, offset, "${name}_export_indexed_${i}")
             }
 
-            fun readPatches(offset: Int): List<CRO0Header.PatchEntry> {
-                seek(offset)
-                val patches = mutableListOf<CRO0Header.PatchEntry>()
-                do {
-                    val patch = read<CRO0Header.PatchEntry>()
-                    patches.add(patch)
-                } while (patch.segmentIndex == 0.toByte())
-                return patches
-            }
+        }
+    }
 
-            fun insertPatch(patch: CRO0Header.PatchEntry, function: ExternalLocation, name: String) {
-                val segment = patch.segmentOffset and 0xF
-                val offset = patch.segmentOffset shr 4
+    protected open fun applyPatches(program: Program, provider: ByteProvider) {
+        provider.getInputStream(0).reader {
+            val header = read<CRO0Header>()
+
+            seek(header.relocationPatchesOffset)
+            for (patch in readList<CRO0Header.PatchEntry>(header.relocationPatchesNum)) {
+                val (segment, offset) = patch.segmentOffset.segOff
+                if (segment == 3) continue
+
                 val block = program.memory.getBlock(getSegmentName(segment))
-                val addr = block.start.add(offset.toLong())
-                // Create jump to func
+                val patchAddress = block.start.add(offset.toLong())
+
+                val targetSegment = patch.segmentIndex
+                if (targetSegment == 3.toByte()) continue
+
+                val targetAddress = try {
+                    program.memory.getBlock(getSegmentName(targetSegment.toInt())).start.add(patch.addend.toLong())
+                } catch (e: IllegalArgumentException) {
+                    // BSS section, ignore
+                    continue
+                } catch (e: NullPointerException) {
+                    println("WARN: Failed to find block for segment $targetSegment (patch: $patchAddress:${patch.addend}) | blocks: ${program.memory.blocks.joinToString(", ") { "${it.name}:${it.start}-${it.end}" }}")
+                    continue
+                }
 
                 val arr = ByteArray(4)
                 when (patch.patchType) {
                     2.toUByte() -> {
                         // Absolute jump
-                        ByteBuffer.wrap(arr).order(ByteOrder.LITTLE_ENDIAN).putInt(function.address.offset.toInt())
+                        ByteBuffer.wrap(arr).order(ByteOrder.LITTLE_ENDIAN).putInt(targetAddress.offset.toInt())
                     }
                     3.toUByte() -> {
                         // Relative jump
-                        ByteBuffer.wrap(arr).order(ByteOrder.LITTLE_ENDIAN).putInt(function.address.offset.toInt() - addr.offset.toInt())
+                        ByteBuffer.wrap(arr).order(ByteOrder.LITTLE_ENDIAN).putInt(targetAddress.offset.toInt() - patchAddress.offset.toInt())
                     }
                     else -> {
                         throw IllegalStateException("Unknown patch type ${patch.patchType}")
                     }
                 }
-                program.memory.setBytes(addr, arr)
-            }
 
-            // Imports
-            seek(header.namedImportTableOffset)
-            val namedImports = readList<CRO0Header.NamedImportTableEntry>(header.namedImportTableNum)
-            for (import in namedImports) {
-                seek(import.nameOffset)
-                val name = readNullTerminatedString()
-                val patches = readPatches(import.listOffset)
-
-                val addr = externalAddr()
-                val func = program.externalManager.addExtFunction("|named_exports|", name, addr, SourceType.IMPORTED)
-                api.createFunction(addr, name)
-                for (patch in patches) {
-                    insertPatch(patch, func, name)
-                }
-            }
-
-            for (module in importModules) {
-                seek(module.nameOffset)
-                val name = readNullTerminatedString()
-
-                seek(module.indexedHeadOffset)
-                val indexedImports = readList<CRO0Header.IndexedImportTableEntry>(module.indexedImportNum)
-
-                for (import in indexedImports) {
-                    val addr = externalAddr()
-                    val func = program.externalManager.addExtFunction(name, "${name}_indexed_${import.indexOffset}", addr, SourceType.IMPORTED)
-                    api.createFunction(addr, "${name}_indexed_${import.indexOffset}")
-                    val patches = readPatches(import.listOffset)
-                    for (patch in patches) {
-                        insertPatch(patch, func, "${name}_indexed_${import.indexOffset}")
-                    }
-                }
-
-                seek(module.anonymousHeadOffset)
-                val anonymousImports = readList<CRO0Header.AnonymousImportTableEntry>(module.anonymousImportNum)
-
-                for (import in anonymousImports) {
-                    val importSegment = import.segmentOffset and 0xF
-                    val importOffset = import.segmentOffset shr 4
-
-                    val addr = externalAddr()
-                    val func = program.externalManager.addExtFunction(name, "${name}_anonymous_${importSegment}_${importOffset.toString(16)}", addr, SourceType.IMPORTED)
-                    api.createFunction(addr, "${name}_anonymous_${importSegment}_${importOffset.toString(16)}")
-                    val patches = readPatches(import.listOffset)
-                    for (patch in patches) {
-                        insertPatch(patch, func, "${name}_anonymous_${importSegment}_${importOffset.toString(16)}")
-                    }
-                }
+                program.memory.setBytes(patchAddress, arr)
             }
         }
     }
-
 }

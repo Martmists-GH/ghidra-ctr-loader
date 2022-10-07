@@ -41,10 +41,12 @@ data class CRO0Header(
     val anonymousImportTableNum: Int,
     val importStringsOffset: Int,
     val importStringsSize: Int,
-    val unknown2: Long,  // also two ints
+    val staticAnonymousSymbolTableOffset: Int,
+    val staticAnonymousSymbolTableNum: Int,
     val relocationPatchesOffset: Int,
     val relocationPatchesNum: Int,
-    val unknown3: Long,  // also two ints
+    val staticAnonymousPatchTableOffset: Int,
+    val staticAnonymousPatchTableNum: Int,
 ) {
     data class SegmentTableEntry(
         val offset: Int,

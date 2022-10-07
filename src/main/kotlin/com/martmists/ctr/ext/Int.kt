@@ -5,3 +5,6 @@ val Int.mediaUnits: Long
 
 val Int.hex: String
     get() = "0x${this.toString(16)}"
+
+val Int.segOff: Pair<Int, Int>
+    get() = (this and 0xF) to (this shr 4)
