@@ -15,10 +15,13 @@ import ghidra.app.util.importer.MessageLog
 import ghidra.app.util.opinion.AbstractLibrarySupportLoader
 import ghidra.app.util.opinion.LoadSpec
 import ghidra.program.model.data.DataTypeConflictHandler
+import ghidra.program.model.data.FileDataTypeManager
 import ghidra.program.model.lang.LanguageCompilerSpecPair
 import ghidra.program.model.listing.Program
 import ghidra.program.model.symbol.SourceType
 import ghidra.util.task.TaskMonitor
+import java.io.File
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -62,22 +65,28 @@ open class CROLoader : AbstractLibrarySupportLoader(), CROUtilities {
     }
 
     protected open fun createDataTypes(program: Program) {
-        for (struct in listOf(
-            SegmentOffsetStruct,
-            PatchEntryStruct,
-            SegmentTableEntryStruct,
-            NamedExportTableEntryStruct,
-            IndexedExportTableEntryStruct,
-            NamedImportTableEntryStruct,
-            IndexedImportTableEntryStruct,
-            AnonymousImportTableEntryStruct,
-            ImportModuleTableEntryStruct,
-            CROHeaderStruct,
-        )) {
+        try {
+//            val manager = FileDataTypeManager.createFileArchive(File("/ProjectStructs${FileDataTypeManager.SUFFIX}"));
             val manager = program.dataTypeManager
-            val parser = CParser(manager)
-            val dt = parser.parse(struct)
-            manager.addDataType(dt, DataTypeConflictHandler.REPLACE_HANDLER)
+
+            for (struct in listOf(
+                SegmentOffsetStruct,
+                PatchEntryStruct,
+                SegmentTableEntryStruct,
+                NamedExportTableEntryStruct,
+                IndexedExportTableEntryStruct,
+                NamedImportTableEntryStruct,
+                IndexedImportTableEntryStruct,
+                AnonymousImportTableEntryStruct,
+                ImportModuleTableEntryStruct,
+                CROHeaderStruct,
+            )) {
+                val parser = CParser(manager)
+                val dt = parser.parse(struct)
+                manager.addDataType(dt, DataTypeConflictHandler.REPLACE_HANDLER)
+            }
+        } catch (e: IOException) {
+            // ignore
         }
     }
 
@@ -115,7 +124,13 @@ open class CROLoader : AbstractLibrarySupportLoader(), CROUtilities {
             MemoryBlockUtils.createInitializedBlock(program, false, "name", program.imageBase.add(header.moduleNameOffset.toLong()), nameBytes, 0, header.moduleNameSize.toLong(), "", null, true, true, false, log)
 
             for (segment in segments) {
-                val segmentSize = if (segment.id != 3) segment.size else maxOf(segment.size, header.bssSize)
+                val segmentSize = when(segment.id) {
+                    0 -> segment.size // maxOf(header.codeSize, segment.size)
+                    1 -> segment.size
+                    2 -> segment.size // maxOf(header.dataSize, segment.size)
+                    3 -> maxOf(header.bssSize, segment.size)
+                    else -> throw IllegalStateException("Unknown segment id ${segment.id}")
+                }
 
                 if (segmentSize == 0 || program.memory.getBlock(getSegmentName(segment.id)) != null) {
                     continue
@@ -134,7 +149,7 @@ open class CROLoader : AbstractLibrarySupportLoader(), CROUtilities {
                         if (offset == 0) {
                             offset = 0x00800000
                         }
-                        MemoryBlockUtils.createUninitializedBlock(program, false, segmentName, program.imageBase.add(offset.toLong()), segmentSize.toLong(), "", null, r, w, x, log)
+                        MemoryBlockUtils.createInitializedBlock(program, false, segmentName, program.imageBase.add(offset.toLong()), segmentSize.toLong(), "", null, r, w, x, log)
                     }
                     else -> throw IllegalStateException("Unknown segment ID ${segment.id}")
                 }
@@ -166,6 +181,16 @@ open class CROLoader : AbstractLibrarySupportLoader(), CROUtilities {
         provider.getInputStream(0).reader {
             val header = read<CRO0Header>()
 
+            for ((name, addr) in mapOf(
+                "_cro_OnLoad" to header.onLoadOffset,
+                "_cro_OnExit" to header.onExitOffset,
+                "_cro_OnUnresolved" to header.onUnresolvedOffset,
+            )) {
+                if (addr != 0xFFFFFFFF.toInt()) {
+                    program.createFromReference(0, addr - program.memory.getBlock(".text").start.offset.toInt(), name)
+                }
+            }
+
             seek(header.moduleNameOffset)
             val name = readNullTerminatedString()
 
@@ -194,10 +219,12 @@ open class CROLoader : AbstractLibrarySupportLoader(), CROUtilities {
         provider.getInputStream(0).reader {
             val header = read<CRO0Header>()
 
+            seek(header.segmentTableOffset)
+            val segments = readList<CRO0Header.SegmentTableEntry>(header.segmentTableNum)
+
             seek(header.relocationPatchesOffset)
             for (patch in readList<CRO0Header.PatchEntry>(header.relocationPatchesNum)) {
                 val (segment, offset) = patch.segmentOffset.segOff
-                if (segment == 3) continue
 
                 val block = program.memory.getBlock(getSegmentName(segment))
                 val patchAddress = block.start.add(offset.toLong())
@@ -207,12 +234,15 @@ open class CROLoader : AbstractLibrarySupportLoader(), CROUtilities {
                 val targetAddress = try {
                     val targetBlock = program.memory.getBlock(getSegmentName(targetSegment.toInt()))
                     val target = targetBlock.start.add(patch.addend.toLong())
+
                     if (target > targetBlock.end) {
-                        throw IllegalStateException("Target address ($target) for patch ($patchAddress:${patch.addend.hex}) is outside of segment $targetSegment:${block.start}-${block.end}")
+                        println("WARNING: Target address ($target) for patch ($patchAddress:${patch.addend.hex}) is outside of segment $targetSegment:${targetBlock.start}-${targetBlock.end}. This may cause issues in analysis!")
                     }
                     target
                 } catch (e: NullPointerException) {
-                    throw IllegalStateException("Failed to find block for segment $targetSegment (patch: $patchAddress:${patch.addend.hex}) | blocks: ${program.memory.blocks.joinToString(", ") { "${it.name}:${it.start}-${it.end}" }}")
+                    val target = program.addressFactory.getConstantAddress((segments.first { it.id == targetSegment.toInt() }.offset + patch.addend).toLong())
+                    println("WARNING: Target address ($target) for patch ($patchAddress:${patch.addend.hex}) points to segment $targetSegment but is missing. This may cause issues in analysis!")
+                    target
                 }
 
                 val arr = ByteArray(4)

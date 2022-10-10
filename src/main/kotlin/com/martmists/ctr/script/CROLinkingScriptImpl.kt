@@ -1,21 +1,10 @@
 package com.martmists.ctr.script
 
 import com.martmists.ctr.common.CROUtilities
-import com.martmists.ctr.ext.reader
 import com.martmists.ctr.ext.segOff
-import com.martmists.ctr.ext.stripNulls
-import com.martmists.ctr.loader.format.CRO0Header
-import com.martmists.ctr.reader.Reader
 import ghidra.app.script.GhidraScript
-import ghidra.app.util.bin.MemoryByteProvider
 import ghidra.framework.model.DomainFile
-import ghidra.program.model.address.Address
-import ghidra.program.model.address.AddressSet
-import ghidra.program.model.listing.CodeUnit
 import ghidra.program.model.listing.Program
-import ghidra.program.model.symbol.SourceType
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 open class CROLinkingScriptImpl : GhidraScript(), CROUtilities {
     private var exportIndex = 0L

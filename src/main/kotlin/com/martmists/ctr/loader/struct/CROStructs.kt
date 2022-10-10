@@ -62,10 +62,10 @@ val CROHeaderStruct = """struct CRO0Header {
     int fileSize;
     int bssSize;
     int unknown1[2];
-    struct SegmentOffset nnroControlObjectOffset;
-    struct SegmentOffset onLoadOffset;
-    struct SegmentOffset onExitOffset;
-    struct SegmentOffset onUnresolvedOffset;
+    void* nnroControlObjectOffset;
+    void* onLoadOffset;
+    void* onExitOffset;
+    void* onUnresolvedOffset;
     void* codeOffset;
     int codeSize;
     void* dataOffset;
@@ -94,8 +94,10 @@ val CROHeaderStruct = """struct CRO0Header {
     int anonymousImportTableNum;
     char* importStringsOffset;
     int importStringsSize;
-    int unknown2[2];
+    void* staticAnonymousSymbolTableOffset;
+    int staticAnonymousSymbolTableNum;
     struct PatchEntry* relocationPatchesOffset;
     int relocationPatchesNum;
-    int unknown3[2];
+    void* staticAnonymousPatchTableOffset;
+    int staticAnonymousPatchTableNum;
 };"""

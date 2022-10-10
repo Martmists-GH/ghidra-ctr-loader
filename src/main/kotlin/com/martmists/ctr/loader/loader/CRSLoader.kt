@@ -28,11 +28,11 @@ class CRSLoader : CROLoader() {
         val cxiProvider = FileSystemService.getInstance().getByteProvider(provider.fsrl.fs.container, true, monitor)
         val codeBinProvider = FileSystemService.getInstance().getByteProvider(provider.fsrl.fs.withPath("/exefs/.code"), true, monitor)
 
-        provider.getInputStream(0).reader {
+        provider.getInputStream(0).reader crs@{
             val header = read<CRO0Header>()
 
-            val headerBytes = MemoryBlockUtils.createFileBytes(program, provider, 0, 0x312, monitor)
-            MemoryBlockUtils.createInitializedBlock(program, false, "header", program.imageBase, headerBytes, 0, 0x312, "", null, true, false, false, log)
+            val headerBytes = MemoryBlockUtils.createFileBytes(program, provider, 0, 0x138, monitor)
+            MemoryBlockUtils.createInitializedBlock(program, false, "header", program.imageBase, headerBytes, 0, 0x138, "", null, true, false, false, log)
 
             val tablesBytes = MemoryBlockUtils.createFileBytes(program, provider, header.segmentTableOffset.toLong(), (header.dataOffset - header.segmentTableOffset).toLong(), monitor)
             MemoryBlockUtils.createInitializedBlock(program, false, "tables", program.imageBase.add(header.segmentTableOffset.toLong()), tablesBytes, 0, (header.dataOffset - header.segmentTableOffset).toLong(), "", null, true, true, false, log)
@@ -53,10 +53,18 @@ class CRSLoader : CROLoader() {
 
                 val aligned = codeSetMap.values.sumOf { it.size } < codeBinProvider.length()
 
-                seek(header.segmentTableOffset)
-                val segments = readList<CRO0Header.SegmentTableEntry>(header.segmentTableNum)
+                this@crs.seek(header.segmentTableOffset)
+                val segments = this@crs.readList<CRO0Header.SegmentTableEntry>(header.segmentTableNum)
                 for (segment in segments) {
-                    if (segment.size == 0 || program.memory.getBlock(getSegmentName(segment.id)) != null) {
+                    val segmentSize = when(segment.id) {
+                        0 -> maxOf(header.codeSize, segment.size)
+                        1 -> segment.size
+                        2 -> segment.size // maxOf(header.dataSize, segment.size)
+                        3 -> maxOf(header.bssSize, segment.size)
+                        else -> throw IllegalStateException("Unknown segment id ${segment.id}")
+                    }
+
+                    if (segmentSize == 0 || program.memory.getBlock(getSegmentName(segment.id)) != null) {
                         continue
                     }
 
@@ -77,7 +85,7 @@ class CRSLoader : CROLoader() {
                             if (offset == 0) {
                                 offset = 0x00800000
                             }
-                            MemoryBlockUtils.createUninitializedBlock(program, false, segmentName, program.imageBase.add(offset.toLong()), segment.size.toLong(), "", null, r, w, x, log)
+                            MemoryBlockUtils.createInitializedBlock(program, false, segmentName, program.imageBase.add(offset.toLong()), segmentSize.toLong(), "", null, r, w, x, log)
                         }
                         else -> throw IllegalStateException("Unknown segment ID ${segment.id}")
                     }
