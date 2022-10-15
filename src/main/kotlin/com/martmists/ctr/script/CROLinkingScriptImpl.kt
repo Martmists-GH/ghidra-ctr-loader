@@ -1,6 +1,7 @@
 package com.martmists.ctr.script
 
 import com.martmists.ctr.common.CROUtilities
+import com.martmists.ctr.ext.hex
 import com.martmists.ctr.ext.segOff
 import ghidra.app.script.GhidraScript
 import ghidra.framework.model.DomainFile
@@ -29,6 +30,10 @@ open class CROLinkingScriptImpl : GhidraScript(), CROUtilities {
             val program = it.getProgram()
             program to program.getModuleData()
         }.forEach { (moduleProgram, moduleData) ->
+            if (moduleData.name in currentProgram.externalManager.externalLibraryNames) {
+                currentProgram.externalManager.setExternalPath(moduleData.name, moduleProgram.domainFile.pathname, false)
+            }
+
             monitor.message = "Handling module ${moduleData.name}"
 
             // Find locations of named imports
@@ -47,7 +52,7 @@ open class CROLinkingScriptImpl : GhidraScript(), CROUtilities {
             moduleData.importedModules[data.name]?.let { module ->
                 module.anonymous.forEach { entry ->
                     val (segment, offset) = entry.segmentOffset.segOff
-                    currentProgram.createFromReference(segment, offset, "${data.name}_export_anonymous_${segment}_${offset}")
+                    currentProgram.createFromReference(segment, offset, "${data.name}_export_anonymous_${segment}_${offset.hex}")
                 }
             }
 
@@ -65,7 +70,7 @@ open class CROLinkingScriptImpl : GhidraScript(), CROUtilities {
                 monitor.message = "Creating anonymous externals for module ${moduleData.name}"
                 for (entry in module.anonymous) {
                     val (segment, offset) = entry.segmentOffset.segOff
-                    val reference = currentProgram.createReferenceTo(moduleProgram, segment, offset, "${moduleData.name}_export_anonymous_${segment}_${offset}", monitor)
+                    val reference = currentProgram.createReferenceTo(moduleProgram, segment, offset, "${moduleData.name}_export_anonymous_${segment}_${offset.hex}", monitor)
                     currentProgram.applyPatches(entry.listOffset, reference)
                 }
             }

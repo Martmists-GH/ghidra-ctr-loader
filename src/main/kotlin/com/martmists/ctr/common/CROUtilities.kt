@@ -11,6 +11,7 @@ import ghidra.program.model.address.Address
 import ghidra.program.model.address.AddressSet
 import ghidra.program.model.listing.CodeUnit
 import ghidra.program.model.listing.Program
+import ghidra.program.model.symbol.RefType
 import ghidra.program.model.symbol.SourceType
 import ghidra.util.task.TaskMonitor
 import java.nio.ByteBuffer
@@ -130,6 +131,7 @@ interface CROUtilities {
             // Create data
             symbolTable.createLabel(address, symName, SourceType.ANALYSIS)
         }
+        listing.setComment(address, CodeUnit.EOL_COMMENT, symName)
     }
 
     fun nextExportIndex(): Long
@@ -155,10 +157,11 @@ interface CROUtilities {
         if (segmentName == ".text") {
             // Create function reference
             val loc = externalManager.addExtFunction(moduleName, sym, moduleAddress, SourceType.ANALYSIS)
-            val func = api.createFunction(externalAddress, sym)
+            val func = api.createFunction(externalAddress, null)
             func.setThunkedFunction(loc.function)
         } else {
             // Create data reference
+            externalManager.addExtLocation(moduleName, sym, moduleAddress, SourceType.ANALYSIS)
             symbolTable.createLabel(externalAddress, symName, SourceType.ANALYSIS)
             listing.setComment(externalAddress, CodeUnit.REPEATABLE_COMMENT, "${sym}:{@program \"${module.domainFile.pathname}@${moduleAddress}\"}")
         }
