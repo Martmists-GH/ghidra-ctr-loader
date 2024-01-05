@@ -22,7 +22,7 @@ import kotlin.math.min
     factory = CXIFileSystemFactory::class,
     priority = FileSystemInfo.PRIORITY_HIGH,
 )
-class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProvider, private val fsService: FileSystemService) : GFileSystem {
+class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProvider, private val fsService: FileSystemService) : MountableGFileSystem {
     data class Metadata(
         val ncch: NCCHHeader,
         val ncchEx: NCCHExHeader,
@@ -34,12 +34,7 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
     private var fileCount = 0L
     private var closed = false
 
-    /**
-     * Mounts (opens) the file system.
-     *
-     * @param monitor A cancellable task monitor.
-     */
-    fun mount(monitor: TaskMonitor) {
+    override fun mount(monitor: TaskMonitor) {
         val stream = provider.getInputStream(0)
         stream.reader {
             val ncch = read<NCCHHeader>()
@@ -134,7 +129,7 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
                     codeSection.size
                 }
 
-                fsService.getDerivedByteProviderPush(provider.fsrl, file.fsrl, file.path, size.toLong(), { out ->
+                fsService.getDerivedByteProviderPush(fsFSRL.container, file.fsrl, file.path, size.toLong(), { out ->
                     provider.getInputStream(0).reader {
                         seek(exefsStart + codeSection.offset)
                         var code = readBytes(codeSection.size)
@@ -153,7 +148,7 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
                 val level3HeaderStart = tell()
                 val level3Header = read<IVFCHeader.Level3Header>()
 
-                fsService.getDerivedByteProviderPush(provider.fsrl, file.fsrl, file.path, metadata.file!!.dataSize, { out ->
+                fsService.getDerivedByteProviderPush(fsFSRL.container, file.fsrl, file.path, metadata.file!!.dataSize, { out ->
                     val stream = provider.getInputStream(level3HeaderStart + level3Header.fileDataOffset + metadata.file.dataOffset)
                     var remaining = metadata.file.dataSize
                     while (remaining > 0) {

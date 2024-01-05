@@ -93,10 +93,17 @@ open class CROLoader : AbstractLibrarySupportLoader(), CROUtilities {
     private fun createSegments(program: Program, provider: ByteProvider, monitor: TaskMonitor, log: MessageLog) {
         if (provider.fsrl.fs.container != null) {
             val parent = provider.fsrl.fs.container
+
+            val cxiContainers = listOf(
+                ".cxi",
+                ".cia",
+            )
+
             when {
-                parent.path.endsWith(".cxi") -> {
+                cxiContainers.any { parent.path.endsWith(it) } -> {
                     createSegmentsFromCXI(provider, program, monitor, log)
                 }
+                else -> throw IllegalStateException("Unknown container ${parent.path}")
             }
         } else {
             createSegmentsFromFile(provider, program, monitor, log)

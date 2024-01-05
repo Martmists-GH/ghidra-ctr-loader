@@ -1,13 +1,16 @@
 package com.martmists.ctr.reader
 
+import com.martmists.ctr.ext.hex
 import java.io.FileInputStream
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.contracts.InvocationKind
+import kotlin.contracts.contract
 import kotlin.reflect.*
 import kotlin.reflect.full.isSubclassOf
 
-class Reader(private val littleEndian: Boolean, private val stream: InputStream) {
+class Reader(private var littleEndian: Boolean, private val stream: InputStream) {
     private var offset = 0L
 
     init {
@@ -16,8 +19,27 @@ class Reader(private val littleEndian: Boolean, private val stream: InputStream)
         }
     }
 
+    fun <T> withEndian(little: Boolean, block: Reader.() -> T): T {
+        contract {
+            callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+        }
+
+        val oldLittle = littleEndian
+
+        littleEndian = little
+        val res = block()
+        littleEndian = oldLittle
+
+        return res
+    }
+
     fun tell(): Long {
         return offset
+    }
+
+    fun align(byteCount: Int) {
+        val padding = (byteCount - (offset % byteCount)) % byteCount
+        skip(padding)
     }
 
     fun skip(size: Long) {
@@ -72,72 +94,78 @@ class Reader(private val littleEndian: Boolean, private val stream: InputStream)
 
     @PublishedApi
     internal fun <T : Any> read(type: KType, clazz: KClass<T>) : T {
-        return if (clazz.isData) {
-            val objs = mutableListOf<Any>()
-            val constructor = clazz.constructors.first()
-            val known = mutableMapOf<String, Any>()
-            for (param in constructor.parameters) {
-                val name = param.name!!
-                if (name.startsWith("align_")) {
-                    val align = name.substring(6).toInt()
-                    val padding = (align - (offset % align)) % align
-                    skip(padding)
-                    objs.add(0)
-                    continue
-                }
+        try {
+            return if (clazz.isData) {
+                val objs = mutableListOf<Any>()
+                val constructor = clazz.constructors.first()
+                val known = mutableMapOf<String, Any>()
+                for (param in constructor.parameters) {
+                    val name = param.name!!
+                    if (name.startsWith("align_")) {
+                        val align = name.substring(6).toInt()
+                        val padding = (align - (offset % align)) % align
+                        skip(padding)
+                        objs.add(0)
+                        continue
+                    }
 
-                val item = if (name.startsWith("magic")) {
-                    val expectedPair = name.substring(6).let {
-                        try {
-                            it.toInt(16) to read<Int>()
-                        } catch (e: NumberFormatException) {
-                            it to readString(it.length)
+                    val item = if (name.startsWith("magic")) {
+                        val expectedPair = name.substring(6).let {
+                            try {
+                                it.toInt(16) to read<Int>()
+                            } catch (e: NumberFormatException) {
+                                it to readString(it.length)
+                            }
+                        }
+                        if (expectedPair.first != expectedPair.second) {
+                            throw IllegalArgumentException("Expected magic value of ${expectedPair.first}, got ${expectedPair.second}")
+                        }
+                        expectedPair.first
+                    } else {
+                        val t = param.type
+                        val cls = t.classifier as KClass<*>
+                        if (cls.isSubclassOf(List::class)) {
+                            val size =
+                                known["${name}_size"] ?: known["${name}_count"] ?: name.split("_").last().toIntOrNull()
+                                ?: throw IllegalArgumentException("List type must have an associated size or count field of type Int, or specify the name!")
+                            val subtype = t.arguments.first().type!!
+                            val subcls = subtype.classifier as KClass<*>
+                            readList(size as Int, subtype, subcls)
+                        } else if (cls.isSubclassOf(ByteArray::class)) {
+                            val size =
+                                known["${name}_size"] ?: known["${name}_count"] ?: name.split("_").last().toIntOrNull()
+                                ?: throw IllegalArgumentException("ByteArray must have an associated size or count field of type Int, or specify the name!")
+                            readBytes(size as Int)
+                        } else if (cls.isSubclassOf(String::class)) {
+                            val size =
+                                known["${name}_size"] ?: known["${name}_count"] ?: name.split("_").last().toIntOrNull()
+                                ?: throw IllegalArgumentException("ByteArray must have an associated size or count field of type Int, or specify the name!")
+                            readString(size as Int)
+                        } else {
+                            read(t, cls)
                         }
                     }
-                    if (expectedPair.first != expectedPair.second) {
-                        throw IllegalArgumentException("Expected magic value of ${expectedPair.first}, got ${expectedPair.second}")
-                    }
-                    expectedPair.first
-                } else {
-                    val t = param.type
-                    val cls = t.classifier as KClass<*>
-                    if (cls.isSubclassOf(List::class)) {
-                        val size = known["${name}_size"] ?: known["${name}_count"] ?: name.split("_").last().toIntOrNull() ?: throw IllegalArgumentException("List type must have an associated size or count field of type Int, or specify the name!")
-                        val subtype = t.arguments.first().type!!
-                        val subcls = subtype.classifier as KClass<*>
-                        readList(size as Int, subtype, subcls)
-                    } else if (cls.isSubclassOf(ByteArray::class)) {
-                        val size =
-                            known["${name}_size"] ?: known["${name}_count"] ?: name.split("_").last().toIntOrNull()
-                            ?: throw IllegalArgumentException("ByteArray must have an associated size or count field of type Int, or specify the name!")
-                        readBytes(size as Int)
-                    } else if (cls.isSubclassOf(String::class)) {
-                        val size =
-                            known["${name}_size"] ?: known["${name}_count"] ?: name.split("_").last().toIntOrNull()
-                            ?: throw IllegalArgumentException("ByteArray must have an associated size or count field of type Int, or specify the name!")
-                        readString(size as Int)
-                    } else {
-                        read(t, cls)
-                    }
+                    objs.add(item)
+                    known[name] = item
                 }
-                objs.add(item)
-                known[name] = item
-            }
-            constructor.call(*objs.toTypedArray())
-        } else {
-            when (clazz) {
-                Byte::class -> readPrimitive(1).get()
-                UByte::class -> readPrimitive(1).get().toUByte()
-                Char::class -> readPrimitive(1).get().toInt().toChar()
-                Short::class -> readPrimitive(2).short
-                UShort::class -> readPrimitive(2).short.toUShort()
-                Int::class -> readPrimitive(4).int
-                UInt::class -> readPrimitive(4).int.toUInt()
-                Long::class -> readPrimitive(8).long
-                ULong::class -> readPrimitive(8).long.toULong()
-                else -> throw UnsupportedOperationException("Unsupported type: ${clazz.simpleName}")
-            }
-        } as T
+                constructor.call(*objs.toTypedArray())
+            } else {
+                when (clazz) {
+                    Byte::class -> readPrimitive(1).get()
+                    UByte::class -> readPrimitive(1).get().toUByte()
+                    Char::class -> readPrimitive(1).get().toInt().toChar()
+                    Short::class -> readPrimitive(2).short
+                    UShort::class -> readPrimitive(2).short.toUShort()
+                    Int::class -> readPrimitive(4).int
+                    UInt::class -> readPrimitive(4).int.toUInt()
+                    Long::class -> readPrimitive(8).long
+                    ULong::class -> readPrimitive(8).long.toULong()
+                    else -> throw UnsupportedOperationException("Unsupported type: ${clazz.simpleName}")
+                }
+            } as T
+        } catch (e: Exception) {
+            throw Exception("Error reading ${clazz.simpleName} at offset ${offset.hex}", e)
+        }
     }
 
     @PublishedApi

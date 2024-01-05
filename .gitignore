@@ -46,3 +46,4 @@ gradle-local.properties
 .idea/
 lib/
 *.cxi
+*.cia

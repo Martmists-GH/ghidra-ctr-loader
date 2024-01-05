@@ -2,8 +2,8 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.util.Properties
 
 plugins {
-    kotlin("jvm") version "1.7.10"
-    id("com.github.ben-manes.versions") version "0.42.0"
+    kotlin("jvm") version "1.9.21"
+    id("com.github.ben-manes.versions") version "0.50.0"
 }
 
 group = "com.martmists"
@@ -46,14 +46,20 @@ tasks {
             "*.kts",
             "gradle*.properties",
             "*.cxi",
+            "*.cia",
             "exefs/",
             "romfs/",
         )
     }
 
+    withType<JavaCompile> {
+        sourceCompatibility = JavaVersion.VERSION_1_8.toString()
+        targetCompatibility = JavaVersion.VERSION_1_8.toString()
+    }
+
     withType<KotlinCompile> {
         kotlinOptions {
-            jvmTarget = "1.8"
+            jvmTarget = JavaVersion.VERSION_1_8.toString()
             freeCompilerArgs = listOf(
                 "-opt-in=kotlin.contracts.ExperimentalContracts"
             )
