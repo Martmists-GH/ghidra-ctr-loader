@@ -121,7 +121,7 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
                 val exefsStart = tell()
                 val codeSection = exefsHeader.fileHeaders_10.first { it.filename_8.stripNulls() == fileName }
 
-                val size = if (metadata.ncchEx.sci.flags and 0x1 == 1.toByte()) {
+                val size = if (metadata.ncchEx.sci.flags and 0x1 == 1.toByte() && fileName.stripNulls() == ".code") {
                     skip(codeSection.offset.toLong())
                     val exefsCode = readBytes(codeSection.size)
                     exefsCode.lzssSize()
@@ -133,7 +133,7 @@ class CXIFileSystem(private val fsFSRL: FSRLRoot, private var provider: ByteProv
                     provider.getInputStream(0).reader {
                         seek(exefsStart + codeSection.offset)
                         var code = readBytes(codeSection.size)
-                        if (metadata.ncchEx.sci.flags and 0x1 == 1.toByte()) {
+                        if (metadata.ncchEx.sci.flags and 0x1 == 1.toByte()  && fileName.stripNulls() == ".code") {
                             code = code.lzss()
                         }
                         out.write(code)
